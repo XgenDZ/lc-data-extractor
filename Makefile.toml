@@ -1,0 +1,56 @@
+[tasks.install]
+script = '''
+@echo off
+REM echo ^> creating land directory
+echo ^> checking for the land directory
+if not exist %HOME%\.local\ (
+    echo creating directory %HOME%\.local\
+    mkdir %HOME%\.local
+    attrib +h %HOME%\.local /d
+)
+if not exist %HOME%\.local\bin\ (
+    echo creating directory %HOME%\.local\bin\
+    mkdir %HOME%\.local\bin
+)
+echo ^> copying executable file(s)
+copy /y /v %cd%\target\debug\lc-data-extractor.exe %HOME%\.local\bin
+if not exist %APPDATA%\lc-data-extractor\ (
+    echo ^> creating application data directory
+    mkdir %APPDATA%\lc-data-extractor
+)
+set CERT_URL=https://static.developer.riotgames.com/docs/lol/riotgames.pem
+set CERT_DST=%APPDATA%\lc-data-extractor\riotgames.pem
+echo ^> checking for TLS certificate
+if not exist %CERT_DST% (
+    echo Downloading Riot Games TLS/SSL Certificate...
+    bitsadmin /transfer "Riot Games TLS/SSL Certificate" %CERT_URL% %CERT_DST% > nul
+) else (
+    echo file is present in the system
+)
+'''
+
+[tasks.update_path]
+script = '''
+@echo off
+set REGKEY=HKEY_CURRENT_USER\Environment
+set BACKUP_DIR=%APPDATA%\lc-data-extractor\backups
+for /f "tokens=2 delims==" %%A in ('wmic os get localdatetime /format:list') do set dt=%%A
+echo timestamp: %dt%
+set BACKUP_FILE=env_path_%dt:~2,12%.txt
+if not exist "%BACKUP_DIR%\" ( mkdir "%BACKUP_DIR%" )
+echo.
+echo Do not run this command (script) more than once! If you do, you will
+echo have to manually edit the PATH environment variable to remove duplicates.
+echo.
+echo If you have problems with the system because of the corrupted
+echo PATH value, you can restore it from one of backup files located
+echo in "%BACKUP_DIR%".
+echo.
+echo ^> reading regestry %REGKEY%\Path
+for /f "usebackq tokens=2*" %%A in (`reg query %REGKEY% /v PATH`) do set CURRPATH=%%B
+REM echo current PATH value: %CURRPATH%
+echo ^> creating backup file %BACKUP_DIR%\%BACKUP_FILE%
+echo %CURRPATH% > "%BACKUP_DIR%\%BACKUP_FILE%"
+echo ^> updating PATH variable
+REM setx PATH "%CURRPATH%;%HOME%\.local\bin"
+'''
