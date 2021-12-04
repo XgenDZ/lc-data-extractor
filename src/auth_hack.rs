@@ -215,11 +215,23 @@ pub unsafe fn __get_proc_cmd(verbose: Verbose,
         buffer_size, buffer_size * 2);
 
     log!(verbose.1, "Reading UNICODE_STRING buffer...\n");
-    read_flow_suspend!(RFSUSP0/2);
-    let _v = core::ptr::read_unaligned(
-        buffer_ptr as *const [u16;USTR_SWAP_BUFFER_SIZE]
-    );
-    let outp = String::from_utf16_lossy(&_v);
+    assert!(handle != NULLPTR);
+    let mut result: BOOL = 0;
+    let mut reqsz: SIZE_T = 0;
+    let mut sb: [u16; USTR_SWAP_BUFFER_SIZE] =
+        [0; USTR_SWAP_BUFFER_SIZE];
+    let sb_ptr = &mut sb;
+    let sb_ptr: PVOID = sb_ptr.as_mut_ptr() as PVOID;
+    let sb_sz: SIZE_T = size_of::<[u16; USTR_SWAP_BUFFER_SIZE]>();
+    result = memoryapi::ReadProcessMemory(
+        handle, buffer_ptr as PVOID, sb_ptr, sb_sz, &mut reqsz);
+    if result == FALSE { panic!(); }
+    log!(verbose.1, "content(raw): [ ");
+    for ch in &sb {
+        log!(verbose.1, "{} ", *ch);
+    }
+    log!(verbose.1, "]\n");
+    let outp = String::from_utf16_lossy(&sb);
 
     log!(verbose.1, "extracted launch command: {}\n", &outp);
     return outp;
