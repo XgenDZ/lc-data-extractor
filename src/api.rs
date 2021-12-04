@@ -100,7 +100,10 @@ impl Context {
             Method::Post => panic!("not implemented yet"),
             Method::Delete => panic!("not implemented yet"),
         };
-        let pem = std::fs::read(CERT_FILE_PATH)
+        let appdata_dir = std::env::vars().find(|v| { v.0 == "APPDATA" }).unwrap();
+        let cert_path = CERT_FILE_PATH.replace("%appdata%", &appdata_dir.1);
+        log!(self.verbose.1, "cert file path: {}\n", &cert_path);
+        let pem = std::fs::read(&cert_path)
             .expect("cannot read TLS certificate");
         let cert = native_tls::Certificate::from_pem(&pem).unwrap();
         let req = req.header("Authorization",
