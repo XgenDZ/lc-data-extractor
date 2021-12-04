@@ -283,7 +283,8 @@ pub fn get_auth_data(verbose: Verbose) -> (u32, String) {
     }
     let cl_params = parse_proc_cmd(verbose, proc_launch_cmd);
     log!(verbose.1, "lf diff: {:#x} +000\n", _lf_params.0 - cl_params.0);
-    return cl_params;
+    //return cl_params;
+    return _lf_params;
 }
 
 const LOCKFILE_RL_PATH: &str = "\\lockfile";
