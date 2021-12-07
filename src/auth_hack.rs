@@ -291,6 +291,7 @@ const LOCKFILE_RL_PATH: &str = "\\lockfile";
 
 pub fn _get_lf_data(verbose: Verbose) -> (u32, String) {
     log!(verbose.1, "(debug) Getting LF parameters...\n");
+    log!(verbose.1, "lf path: {}\n", GAME_FOLDER_PATH);
     let lf_data = std::fs::read_to_string(
             GAME_FOLDER_PATH.to_owned() + LOCKFILE_RL_PATH
         ).expect("lf read error");
