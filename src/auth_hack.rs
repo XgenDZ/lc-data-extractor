@@ -1,4 +1,5 @@
 use crate::Verbose;
+use crate::cfg;
 
 use ntapi::ntpebteb;
 use ntapi::ntpsapi;
@@ -29,18 +30,7 @@ use std::mem::zeroed;
 
 type MEMORY_REGION = MEMORY_BASIC_INFORMATION;
 
-/***** DEBUG CONSTANTS *****/
-const RFSUSP0:  u32 = 2000;
-const RFSUSP1:  u32 = 10;
-const RFSUSP2:  u32 = 10;
-const RFSUSP31: u32 = 100;
-const RFSUSP32: u32 = 0;
-/***************************/
-
-const PAGE_SIZE: usize = 4096;
-const USTR_SWAP_BUFFER_SIZE: usize = 255; // in symbols, not in bytes
-pub const TARGET_PROCESS: &str = "LeagueClientUx.exe";
-const GAME_FOLDER_PATH: &str = "C:\\Riot Games\\League of Legends";
+const LOCKFILE_REL_PATH: &str = "\\lockfile";
 
 macro_rules! log {
     ( $x:expr , $($arg:tt)* ) => {
@@ -64,9 +54,10 @@ fn slice_i8_to_u8_cstr(src: &[i8]) -> Vec<u8> {
     return vec;
 }
 
-pub unsafe fn __find_process(verbose: Verbose, target: &'static str)
+pub unsafe fn __find_process(verbose: Verbose, config: &cfg::Config)
     -> winapi::um::winnt::HANDLE
 {
+    let target = cfg::TARGET_PROCESS;
     macro_rules! proc_info_format_string { ( ) => {
         //"  {:#016x} <- {:#016x}  {:2} threads  '{}'\n"
         "  {:06} <- {:06}  {:2} threads  '{}'\n"
@@ -98,14 +89,14 @@ pub unsafe fn __find_process(verbose: Verbose, target: &'static str)
         ..zeroed::<tlhelp32::PROCESSENTRY32>()
     };
     log!(verbose.0, "Searching for the process...\n");
-    read_flow_suspend!(RFSUSP0/2);
+    read_flow_suspend!(config.debug.rfsuspv[0]/2);
     result = tlhelp32::Process32First(snapshot, &mut pe32);
     if result == FALSE {
         panic!();
     }
     let mut absname = String::new(); /* */
     while {
-        read_flow_suspend!(RFSUSP1);
+        read_flow_suspend!(config.debug.rfsuspv[1]);
         result = tlhelp32::Process32Next(snapshot, &mut pe32);
         let _handle = processthreadsapi::OpenProcess(
             STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0xFFFF,
@@ -134,11 +125,13 @@ pub unsafe fn __find_process(verbose: Verbose, target: &'static str)
         panic!("cannot find the process");
     }
     log!(verbose.0, "process found: pid={}, absname='{}'\n", pid, absname);
-    read_flow_suspend!(RFSUSP0/4);
+    read_flow_suspend!(config.debug.rfsuspv[0]/4);
     return handle;
 }
 
-pub unsafe fn __locate_peb_block(verbose: Verbose, handle: HANDLE) -> ntpebteb::PPEB {
+pub unsafe fn __locate_peb_block(verbose: Verbose, config: &cfg::Config,
+                                 handle: HANDLE) -> ntpebteb::PPEB
+{
     const INFO_CLASS: ntpsapi::PROCESSINFOCLASS = 0;
     assert!(handle != NULLPTR);
     let mut status: NTSTATUS;
@@ -149,7 +142,7 @@ pub unsafe fn __locate_peb_block(verbose: Verbose, handle: HANDLE) -> ntpebteb::
     let pbi_ptr: ntpsapi::PPROCESS_BASIC_INFORMATION = &mut pbi;
     let pbi_sz = size_of::<ntpsapi::PROCESS_BASIC_INFORMATION>() as ULONG;
     log!(verbose.0, "Searching the PEB in process memory...\n");
-    read_flow_suspend!(RFSUSP0);
+    read_flow_suspend!(config.debug.rfsuspv[0]);
     status = ntpsapi::NtQueryInformationProcess(
         handle, INFO_CLASS, pbi_ptr as PVOID, pbi_sz, &mut reqsz);
     if status != 0 { panic!(); }
@@ -157,9 +150,8 @@ pub unsafe fn __locate_peb_block(verbose: Verbose, handle: HANDLE) -> ntpebteb::
     return pbi.PebBaseAddress;
 }
 
-pub unsafe fn __get_proc_params(verbose: Verbose,
-                                handle: HANDLE,
-                                peb_addr: ntpebteb::PPEB)
+pub unsafe fn __get_proc_params(verbose: Verbose, config: &cfg::Config,
+                                handle: HANDLE, peb_addr: ntpebteb::PPEB)
     -> ntrtl::RTL_USER_PROCESS_PARAMETERS
 {
     assert!(handle != NULLPTR);
@@ -171,7 +163,7 @@ pub unsafe fn __get_proc_params(verbose: Verbose,
     let peb_ptr: ntpebteb::PPEB = &mut peb;
     sz = size_of::<ntpebteb::PEB>();
     log!(verbose.0, "Reading the PEB structure...\n");
-    read_flow_suspend!(RFSUSP0/2);
+    read_flow_suspend!(config.debug.rfsuspv[0]/2);
     result = memoryapi::ReadProcessMemory(
         handle, peb_addr as PVOID, peb_ptr as LPVOID,
         sz, &mut reqsz
@@ -186,7 +178,7 @@ pub unsafe fn __get_proc_params(verbose: Verbose,
     sz = size_of::<ntrtl::RTL_USER_PROCESS_PARAMETERS>();
     log!(verbose.1, "  RTL_PROC_PARAMS address: {:#016x}\n", address as u32);
     log!(verbose.1, "Reading RTL_PROC_PARAMS structure...\n");
-    read_flow_suspend!(RFSUSP0);
+    read_flow_suspend!(config.debug.rfsuspv[0]);
     result = memoryapi::ReadProcessMemory(
         handle,
         address as PVOID,
@@ -197,8 +189,7 @@ pub unsafe fn __get_proc_params(verbose: Verbose,
     return rtl_proc_params;
 }
 
-pub unsafe fn __get_proc_cmd(verbose: Verbose,
-                             handle: HANDLE,
+pub unsafe fn __get_proc_cmd(verbose: Verbose, config: &cfg::Config, handle: HANDLE,
                              rtl_proc_params: &ntrtl::RTL_USER_PROCESS_PARAMETERS)
     -> std::string::String
 {
@@ -206,7 +197,7 @@ pub unsafe fn __get_proc_cmd(verbose: Verbose,
     let buffer_ptr = rtl_proc_params.CommandLine.Buffer;
     let buffer_size = rtl_proc_params.CommandLine.MaximumLength;
     assert!(buffer_ptr != NULLPTR as *mut u16);
-    assert!(buffer_size as usize >= USTR_SWAP_BUFFER_SIZE);
+    assert!(buffer_size as usize >= cfg::USTR_SWAP_BUFFER_SIZE);
 
     log!(verbose.1, "Retrieving process command line...\n");
     log!(verbose.1, "  UNICODE_STRING buffer address: {:#016X}\n",
@@ -218,11 +209,11 @@ pub unsafe fn __get_proc_cmd(verbose: Verbose,
     assert!(handle != NULLPTR);
     let mut result: BOOL = 0;
     let mut reqsz: SIZE_T = 0;
-    let mut sb: [u16; USTR_SWAP_BUFFER_SIZE] =
-        [0; USTR_SWAP_BUFFER_SIZE];
+    let mut sb: [u16; cfg::USTR_SWAP_BUFFER_SIZE] =
+        [0; cfg::USTR_SWAP_BUFFER_SIZE];
     let sb_ptr = &mut sb;
     let sb_ptr: PVOID = sb_ptr.as_mut_ptr() as PVOID;
-    let sb_sz: SIZE_T = size_of::<[u16; USTR_SWAP_BUFFER_SIZE]>();
+    let sb_sz: SIZE_T = size_of::<[u16; cfg::USTR_SWAP_BUFFER_SIZE]>();
     result = memoryapi::ReadProcessMemory(
         handle, buffer_ptr as PVOID, sb_ptr, sb_sz, &mut reqsz);
     if result == FALSE { panic!(); }
@@ -271,29 +262,27 @@ fn parse_proc_cmd(verbose: Verbose, proc_cmd: String) -> (u32, String) {
     )
 }
 
-pub fn get_auth_data(verbose: Verbose) -> (u32, String) {
+pub fn get_auth_data(verbose: Verbose, config: &cfg::Config) -> (u32, String) {
     let proc_launch_cmd: String;
-    let _lf_params: (u32, String);
+    let lf_params: (u32, String);
     unsafe {
-        let handle = __find_process(verbose, TARGET_PROCESS);
-        let peb_addr = __locate_peb_block(verbose, handle);
-        let proc_params = __get_proc_params(verbose, handle, peb_addr);
-        proc_launch_cmd = __get_proc_cmd(verbose, handle, &proc_params);
-        _lf_params = _get_lf_data(verbose); /* */
+        let handle = __find_process(verbose, config);
+        let peb_addr = __locate_peb_block(verbose, config, handle);
+        let proc_params = __get_proc_params(verbose, config, handle, peb_addr);
+        proc_launch_cmd = __get_proc_cmd(verbose, config, handle, &proc_params);
+        lf_params = _get_lf_data(verbose, config); /* */
     }
     let cl_params = parse_proc_cmd(verbose, proc_launch_cmd);
-    log!(verbose.1, "lf diff: {:#x} +000\n", _lf_params.0 - cl_params.0);
+    log!(verbose.1, "lf diff: {:#x} +000\n", lf_params.0 - cl_params.0);
     //return cl_params;
-    return _lf_params;
+    return lf_params;
 }
 
-const LOCKFILE_RL_PATH: &str = "\\lockfile";
-
-pub fn _get_lf_data(verbose: Verbose) -> (u32, String) {
+pub fn _get_lf_data(verbose: Verbose, config: &cfg::Config) -> (u32, String) {
     log!(verbose.1, "(debug) Getting LF parameters...\n");
-    log!(verbose.1, "lf path: {}\n", GAME_FOLDER_PATH);
+    log!(verbose.1, "lf path: {}\n", config.general.game_folder);
     let lf_data = std::fs::read_to_string(
-            GAME_FOLDER_PATH.to_owned() + LOCKFILE_RL_PATH
+            config.general.game_folder.clone() + LOCKFILE_REL_PATH
         ).expect("lf read error");
     let parts = lf_data.split(':');
     let port_str = parts.clone().into_iter().nth(2).unwrap();
@@ -319,9 +308,8 @@ fn hrs(bytes: u64) -> String {
     }
 }
 
-pub unsafe fn __get_proc_memory_regions(verbose: Verbose,
-                                        handle: HANDLE)
-    -> Vec<MEMORY_REGION>
+pub unsafe fn __get_proc_memory_regions(verbose: Verbose, config: &cfg::Config,
+                                        handle: HANDLE) -> Vec<MEMORY_REGION>
 {
     assert!(handle != NULLPTR);
     let mut nbytes: SIZE_T; // return value
@@ -333,11 +321,11 @@ pub unsafe fn __get_proc_memory_regions(verbose: Verbose,
     let mbi_sz = size_of::<MEMORY_BASIC_INFORMATION>();
     let mut vec = Vec::<MEMORY_REGION>::with_capacity(10);
     log!(verbose.0, "Querying memory allocated by the target process...\n");
-    read_flow_suspend!(RFSUSP0);
+    read_flow_suspend!(config.debug.rfsuspv[0]);
     let mut i: usize = 0;
     let mut stats = (0, 0, 0);
     while {
-        read_flow_suspend!(RFSUSP2);
+        read_flow_suspend!(config.debug.rfsuspv[2]);
         nbytes = memoryapi::VirtualQueryEx(handle, addr as PVOID, &mut mbi, mbi_sz);
         log!(
             verbose.1,
@@ -387,14 +375,16 @@ pub unsafe fn __get_proc_memory_regions(verbose: Verbose,
     return vec;
 }
 
-pub unsafe fn __get_memory_defaults(verbose: Verbose) -> (usize, usize) {
+pub unsafe fn __get_memory_defaults(verbose: Verbose, config: &cfg::Config)
+                                    -> (usize, usize)
+{
     log!(verbose.1, "Getting system info...\n");
     let mut sysinfo = SYSTEM_INFO { .. zeroed::<SYSTEM_INFO>() };
     sysinfoapi::GetNativeSystemInfo(&mut sysinfo);
     log!(verbose.1, "  the size of memory page: {}\n", sysinfo.dwPageSize);
     log!(verbose.1, "  allocation granularity: {}\n",
          sysinfo.dwAllocationGranularity);
-    read_flow_suspend!(RFSUSP0);
+    read_flow_suspend!(config.debug.rfsuspv[0]);
     (
         sysinfo.dwPageSize as usize,
         sysinfo.dwAllocationGranularity as usize
@@ -402,6 +392,7 @@ pub unsafe fn __get_memory_defaults(verbose: Verbose) -> (usize, usize) {
 }
 
 pub unsafe fn __dump_memory_region(verbose: Verbose,
+                                   config: &cfg::Config,
                                    handle: HANDLE,
                                    file: &mut std::fs::File,
                                    meminfo: (usize, usize),
@@ -410,20 +401,20 @@ pub unsafe fn __dump_memory_region(verbose: Verbose,
     use std::io::Write;
     assert!(handle != NULLPTR);
     assert_ne!(meminfo, (0, 0));
-    assert_eq!(meminfo.0, PAGE_SIZE);
+    assert_eq!(meminfo.0, config.winapi.memory_page_size);
     let mut nbytes: usize = 0;
     let mut result: BOOL = 0;
     let mut offset: usize = 0;
     let mut reqsz: SIZE_T = 0;
-    let chunk_size = PAGE_SIZE;
-    let mut buff: [u8; PAGE_SIZE] = [0; PAGE_SIZE];
+    let chunk_size = cfg::MEMORY_PAGE_SIZE;
+    let mut buff: [u8; cfg::MEMORY_PAGE_SIZE] = [0; cfg::MEMORY_PAGE_SIZE];
     let mut addr: usize = region.BaseAddress as usize;
-    let npages = region.RegionSize / PAGE_SIZE; // both must be integer
+    let npages = region.RegionSize / cfg::MEMORY_PAGE_SIZE; // both must be integer
     log!(verbose.0, "Dumping memory region {:#016X} ({} pages)...",
         region.BaseAddress as u32, /*region.RegionSize*/ npages);
     std::io::stdout().flush().unwrap();
-    if verbose.0 { read_flow_suspend!(RFSUSP31); }
-    if region.RegionSize % PAGE_SIZE != 0 {
+    if verbose.0 { read_flow_suspend!(config.debug.rfsuspv[4]); }
+    if region.RegionSize % cfg::MEMORY_PAGE_SIZE != 0 {
         log!(verbose.0, "\n  WARNING: region is not page aligned\n");
         std::process::exit(1); /* TEMP */
     }
@@ -455,9 +446,10 @@ pub unsafe fn __dump_memory_region(verbose: Verbose,
 
     log!(verbose.1 & verbose.0, "\n");
     while offset < region.RegionSize as usize {
-        log!(verbose.1, "  [..] reading memory chunk {:#016X}[{}]...", addr, PAGE_SIZE);
+        log!(verbose.1, "  [..] reading memory chunk {:#016X}[{}]...",
+             addr, chunk_size);
         std::io::stdout().flush().unwrap();
-        if verbose.1 { read_flow_suspend!(RFSUSP32); }
+        if verbose.1 { read_flow_suspend!(config.debug.rfsuspv[4]); }
         result = memoryapi::ReadProcessMemory(
             handle, addr as PVOID,
             buff.as_mut_ptr() as LPVOID,
@@ -473,8 +465,8 @@ pub unsafe fn __dump_memory_region(verbose: Verbose,
         let n = file.write(&buff).unwrap();
         //log!(verbose.1, "OK, {} bytes written\r", n);
         log!(verbose.1, "\r  [OK]\r");
-        offset += PAGE_SIZE;
-        addr += PAGE_SIZE;
+        offset += chunk_size;
+        addr += chunk_size;
         nbytes += n;
     }
     if verbose.1 {

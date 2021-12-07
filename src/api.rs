@@ -1,9 +1,9 @@
 use crate::data;
 use crate::error::Error;
 use crate::Verbose;
+use crate::cfg::Config;
 
 const ENTRY_POINT_BASE: &str = "https://127.0.0.1";
-const CERT_FILE_PATH: &str = "%appdata%\\lc-data-extractor\\riotgames.pem";
 
 macro_rules! log {
     ( $x:expr , $($arg:tt)* ) => {
@@ -13,15 +13,17 @@ macro_rules! log {
 
 pub struct Context {
     verbose: Verbose,
+    config: Config,
     base: &'static str,
     token: String,
     port: u32,
 }
 
 impl Context {
-    pub fn new(lcu_port: u32, auth_token: String) -> Self {
+    pub fn new(lcu_port: u32, auth_token: String, config: Config) -> Self {
+        let verbose = Verbose::default();
         Self {
-            verbose: Verbose::default(),
+            verbose, config,
             base: ENTRY_POINT_BASE,
             token: auth_token,
             port: lcu_port,
@@ -100,10 +102,9 @@ impl Context {
             Method::Post => panic!("not implemented yet"),
             Method::Delete => panic!("not implemented yet"),
         };
-        let appdata_dir = std::env::vars().find(|v| { v.0 == "APPDATA" }).unwrap();
-        let cert_path = CERT_FILE_PATH.replace("%appdata%", &appdata_dir.1);
-        log!(self.verbose.1, "cert file path: {}\n", &cert_path);
-        let pem = std::fs::read(&cert_path)
+        log!(self.verbose.1, "cert file path: {}\n",
+             self.config.general.cert_file_path);
+        let pem = std::fs::read(&self.config.general.cert_file_path)
             .expect("cannot read TLS certificate");
         let cert = native_tls::Certificate::from_pem(&pem).unwrap();
         let req = req.header("Authorization",

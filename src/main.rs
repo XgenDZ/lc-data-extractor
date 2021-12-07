@@ -1,3 +1,4 @@
+mod cfg;
 mod api;
 mod auth_hack;
 mod data;
@@ -20,7 +21,7 @@ fn main() {
         verbose = Verbose::default().set_general(!s)
                                     .set_debug1(!s & v);
     }
-    if verbose.0 | verbose.1 {
+    if verbose.0 || verbose.1 {
         println!(
             "Action: {}",
             match &launch_params.act {
@@ -32,10 +33,19 @@ fn main() {
             }
         );
     }
+    let config = match cfg::Config::load() {
+        Some(v) => v,
+        None => {
+            println!("A config file is missed.");
+            println!("Default config has been deployed.");
+            let cfg = cfg::Config::default(); cfg.write();
+            cfg
+        }
+    }.init();
     if let Some(ref action) = launch_params.act {
         match action {
             Action::Extract(_) => {
-                let extracted_data = auth_hack::get_auth_data(verbose);
+                let extracted_data = auth_hack::get_auth_data(verbose, &config);
                 let mut port: Option<u32> = None;
                 let mut token: Option<String> = None;
                 for opt in &launch_params.ops {
@@ -55,6 +65,7 @@ fn main() {
                         Some(_token) => _token,
                         None => extracted_data.1,
                     },
+                    config.clone()
                 ).verbose(verbose);
                 let friend_list = match api.get_friends() {
                     Err(err) => {
@@ -95,16 +106,15 @@ fn main() {
                 let filepath = format!("{}\\lc-data-extractor\\{}",
                                        appdata.unwrap().1, file_name);
                 unsafe {
-                    let target = auth_hack::TARGET_PROCESS;
-                    let handle = auth_hack::__find_process(verbose, target);
-                    let memory = auth_hack::__get_proc_memory_regions(verbose, handle);
+                    let handle = auth_hack::__find_process(verbose, &config);
+                    let memory = auth_hack::__get_proc_memory_regions(verbose, &config, handle);
                     let fn_dump_all = || {
                         let mut file = std::fs::File::create(&filepath).unwrap();
-                        let meminfo = auth_hack::__get_memory_defaults(verbose);
+                        let meminfo = auth_hack::__get_memory_defaults(verbose, &config);
                         let mut fsz = 0;
                         for mbi in &memory {
                             fsz += auth_hack::__dump_memory_region(
-                                verbose, handle, &mut file, meminfo, mbi);
+                                verbose, &config, handle, &mut file, meminfo, mbi);
                         }
                         println!("The process memory was successfully dumped.");
                         println!("  dump file: {}", &filepath);
@@ -112,14 +122,14 @@ fn main() {
                     };
                     let fn_dump_specified = || {
                         let mut file = std::fs::File::create(&filepath).unwrap();
-                        let meminfo = auth_hack::__get_memory_defaults(verbose);
+                        let meminfo = auth_hack::__get_memory_defaults(verbose, &config);
                         for arg in &launch_params.prs {
                             let addr = usize::from_str_radix(arg, 16)
                                 .expect("hex number parse error");
                             for mbi in &memory {
                                 if mbi.BaseAddress as usize == addr {
                                     let fsz = auth_hack::__dump_memory_region(
-                                        verbose, handle, &mut file, meminfo, mbi);
+                                        verbose, &config, handle, &mut file, meminfo, mbi);
                                     println!("The process memory was successfully dumped.");
                                     println!("  dump file: {}", &filepath);
                                     println!("  bytes written: {}", fsz);
