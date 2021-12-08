@@ -97,29 +97,57 @@ impl Context {
         let url = format!("{}:{}/{}", self.base, self.port, ep.compute(params));
         log!(self.verbose.1, ".url={}\n", &url);
         log!(self.verbose.1, ".auth={}\n", self.auth_token_base64());
-        let req = match ep.method {
-            Method::Get => attohttpc::get(url),
-            Method::Post => panic!("not implemented yet"),
-            Method::Delete => panic!("not implemented yet"),
-        };
-        log!(self.verbose.1, "cert file path: {}\n",
-             self.config.general.cert_file_path);
-        let pem = std::fs::read(&self.config.general.cert_file_path)
-            .expect("cannot read TLS certificate");
-        let cert = native_tls::Certificate::from_pem(&pem).unwrap();
-        let req = req.header("Authorization",
-                format!("Basic {}", self.auth_token_base64()))
-            .add_root_certificate(cert);
-        let resp = req.send()?;
-        log!(self.verbose.0, "SUCCESS\n");
-        if self.verbose.1 {
-            for h in resp.headers() {
-                log!(self.verbose.1, ".header {}: {}\n",
-                    h.0, h.1.to_str().unwrap());
-            }
+
+        match self.config.general.http_client.as_str() {
+            "attohttpc" => {
+                let req = match ep.method {
+                    Method::Get => attohttpc::get(url),
+                    Method::Post => panic!("not implemented yet"),
+                    Method::Delete => panic!("not implemented yet"),
+                };
+                log!(self.verbose.1, "cert file path: {}\n",
+                     self.config.general.cert_file_path);
+                let pem = std::fs::read(&self.config.general.cert_file_path)
+                    .expect("cannot read TLS certificate");
+                let cert = native_tls::Certificate::from_pem(&pem).unwrap();
+                let req = req.header("Authorization",
+                                     format!("Basic {}", self.auth_token_base64()))
+                    .add_root_certificate(cert);
+                let resp = req.send()?;
+                log!(self.verbose.0, "SUCCESS\n");
+                if self.verbose.1 {
+                    for h in resp.headers() {
+                        log!(self.verbose.1, ".header {}: {}\n",
+                             h.0, h.1.to_str().unwrap());
+                    }
+                }
+                log!(self.verbose.1, ".status {}\n", resp.status().as_str());
+                return Ok(resp.bytes()?)
+            },
+            "libcurl" => {
+                match ep.method {
+                    Method::Post => panic!("not implemented"),
+                    Method::Delete => panic!("not implemented"),
+                    Method::Get => {}
+                }
+                let handler = CurlRespHandler(Vec::new());
+                let mut hcurl = curl::easy::Easy2::new(handler);
+                let mut headers = curl::easy::List::new();
+                let auth_header = format!("Authorization: Basic {}",
+                                          self.auth_token_base64());
+                headers.append(&auth_header).unwrap();
+                hcurl.http_headers(headers).unwrap();
+                { hcurl.certinfo(false).unwrap();
+                  hcurl.ssl_verify_peer(false).unwrap();
+                  hcurl.ssl_verify_host(false).unwrap(); }
+                hcurl.url(&url).unwrap();
+                hcurl.perform().unwrap(); // TODO: error handling
+                log!(self.verbose.1, ".status {}\n", hcurl.response_code().unwrap());
+                let resp = hcurl.get_ref();
+                return Ok(resp.0.clone());
+            },
+            _ => panic!("config: unknown http client")
         }
-        log!(self.verbose.1, ".status {}\n", resp.status().as_str());
-        Ok(resp.bytes()?)
     }
 }
 
@@ -139,4 +167,13 @@ mod end_points {
         method: Method::Get,
         params: &[],
     };
+}
+
+struct CurlRespHandler ( Vec<u8> );
+
+impl curl::easy::Handler for CurlRespHandler {
+    fn write(&mut self, data: &[u8]) -> Result<usize, curl::easy::WriteError> {
+        self.0.extend_from_slice(data);
+        Ok(data.len())
+    }
 }

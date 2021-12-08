@@ -15,6 +15,7 @@ pub struct SectionGeneral {
     pub work_folder: String,
     pub game_folder: String,
     pub cert_file_path: String,
+    pub http_client: String,
     //pub trg_process: String,
 }
 
@@ -85,6 +86,7 @@ impl Default for Config {
                 work_folder: "%appdata%\\lc-data-extractor".to_owned(),
                 game_folder: "C:\\Riot Games\\League of Legends".to_owned(),
                 cert_file_path: "%appdata%\\lc-data-extractor\\riotgames.pem".to_owned(),
+                http_client: "libcurl".to_owned(),
             },
             winapi: SectionWinAPI {
                 memory_page_size: MEMORY_PAGE_SIZE,
