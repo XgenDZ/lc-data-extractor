@@ -5,7 +5,7 @@ mod data;
 mod error;
 
 const _APP_NAME: &str = "lc-data-extractor";
-const _APP_VERSION: &str = "0.2.7";
+const _APP_VERSION: &str = "0.2.8";
 
 fn main() {
     let launch_params = match parse_arguments(std::env::args()) {

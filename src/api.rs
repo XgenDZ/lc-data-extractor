@@ -125,6 +125,7 @@ impl Context {
                 return Ok(resp.bytes()?)
             },
             "libcurl" => {
+                log!(self.verbose.0, "WARNING: insecure connection (curl)\n");
                 match ep.method {
                     Method::Post => panic!("not implemented"),
                     Method::Delete => panic!("not implemented"),
