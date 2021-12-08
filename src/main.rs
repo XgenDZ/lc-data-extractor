@@ -4,8 +4,10 @@ mod auth_hack;
 mod data;
 mod error;
 
+use std::io::Write;
+
 const _APP_NAME: &str = "lc-data-extractor";
-const _APP_VERSION: &str = "0.2.8";
+const _APP_VERSION: &str = "0.2.9";
 
 fn main() {
     let launch_params = match parse_arguments(std::env::args()) {
@@ -75,10 +77,17 @@ fn main() {
                     Ok(v) => v,
                 };
                 let mut find_friend: Option<String> = None;
+                let mut output_file_path: Option<String> = None;
+                let mut output_file: Option<std::fs::File> = None;
                 for opt in &launch_params.ops {
                     if let CmdOption::Find(v) = opt {
                         find_friend = Some(v.to_owned());
-                        break;
+                    }
+                    if let CmdOption::File(path) = opt {
+                        let f = std::fs::File::create(path)
+                            .expect("cannot create output file");
+                        output_file_path = Some(path.clone());
+                        output_file = Some(f);
                     }
                 }
                 println!();
@@ -87,6 +96,12 @@ fn main() {
                     for friend in friend_list.0 {
                         if friend.name == pattern {
                             println!("{}", friend);
+                            if let Some(mut file) = output_file {
+                                println!("writing to file '{}'...",
+                                         output_file_path.unwrap());
+                                write!(file, "{}", friend);
+                                println!("done\n");
+                            }
                             found = true;
                             break;
                         }
@@ -96,6 +111,12 @@ fn main() {
                     }
                 } else {
                     println!("{}", friend_list);
+                    if let Some(mut file) = output_file {
+                        println!("writing to file '{}'...",
+                                 output_file_path.unwrap());
+                        write!(file, "{}", friend_list);
+                        println!("done\n");
+                    }
                 }
             }
             Action::DumpMemory => {
@@ -194,6 +215,7 @@ enum CmdOption {
     Token(String),
     Objects,
     All,
+    File(String),
 }
 
 struct LaunchParams {
@@ -278,6 +300,7 @@ fn parse_arguments(args: std::env::Args) -> Result<LaunchParams, Error> {
 }
 
 fn parse_option(args: &Vec<String>, i: &mut usize) -> Result<CmdOption, Error> {
+    assert!(*i < args.len());
     match args[*i].as_ref() {
         "--help" => Ok(CmdOption::Help),
         "--objects" => { panic!("not implemented yet") },
@@ -286,6 +309,7 @@ fn parse_option(args: &Vec<String>, i: &mut usize) -> Result<CmdOption, Error> {
         "--version" => Ok(CmdOption::Version),
         "--find" => {
             *i = *i + 1;
+            assert!(*i < args.len());
             let arg = &args[*i];
             if args[*i].starts_with('-') {
                 Err(Error {
@@ -297,6 +321,7 @@ fn parse_option(args: &Vec<String>, i: &mut usize) -> Result<CmdOption, Error> {
         }
         "--port" => {
             *i = *i + 1;
+            assert!(*i < args.len());
             if args[*i].starts_with('-') {
                 Err(Error {
                     kind: ErrorKind::ArgsExpectParameter(args[*i].to_owned()),
@@ -309,6 +334,7 @@ fn parse_option(args: &Vec<String>, i: &mut usize) -> Result<CmdOption, Error> {
         }
         "--token" => {
             *i = *i + 1;
+            assert!(*i < args.len());
             if args[*i].starts_with('-') {
                 Err(Error {
                     kind: ErrorKind::ArgsExpectParameter(args[*i].to_owned()),
@@ -316,6 +342,11 @@ fn parse_option(args: &Vec<String>, i: &mut usize) -> Result<CmdOption, Error> {
             } else {
                 Ok(CmdOption::Token(args[*i].to_owned()))
             }
+        }
+        "--file" => {
+            *i = *i + 1;
+            assert!(*i < args.len());
+            Ok(CmdOption::File(args[*i].to_owned()))
         }
         "--all" => Ok(CmdOption::All),
         "--nop" => Ok(CmdOption::_Nop),
